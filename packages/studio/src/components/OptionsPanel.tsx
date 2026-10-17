@@ -9,6 +9,8 @@ import type {_InternalTypes} from 'remotion';
 import {Internals} from 'remotion';
 import {BACKGROUND} from '../helpers/colors';
 import {useMobileLayout} from '../helpers/mobile-layout';
+import {useSyncExternalStore} from '../helpers/use-sync-external-store';
+import {studioPanelStore} from '../state/studio-panels';
 import {useZodIfPossible, useZodTypesIfPossible} from './get-zod-if-possible';
 import {InspectorPanel} from './InspectorPanel';
 import {showNotification} from './Notifications/NotificationCenter';
@@ -21,16 +23,23 @@ import type {UpdaterFunction} from './RenderModal/SchemaEditor/ZodSwitch';
 import {RenderQueue} from './RenderQueue';
 import {callUpdateDefaultPropsApi} from './RenderQueue/actions';
 import {RendersTab} from './RendersTab';
+import {StudioPanelHost} from './StudioPanelHost';
 import {Tab, Tabs} from './Tabs';
 
-type OptionsSidebarPanel = 'inspector' | 'renders';
+// `panel:<id>` is a tab registered by a <StudioPanel> in the composition
+type OptionsSidebarPanel = 'inspector' | 'renders' | `panel:${string}`;
 
-const localStorageKey = 'remotion.sidebarPanel';
+// Not 'remotion.sidebarPanel', which the explorer panel on the left uses
+const localStorageKey = 'remotion.optionsSidebarPanel';
 
 const getSelectedPanel = (): OptionsSidebarPanel => {
 	const panel = localStorage.getItem(localStorageKey);
 	if (panel === 'renders') {
 		return 'renders';
+	}
+
+	if (panel?.startsWith('panel:')) {
+		return panel as `panel:${string}`;
 	}
 
 	return 'inspector';
@@ -66,6 +75,17 @@ export const OptionsPanel: React.FC<{
 	);
 
 	const [panel, setPanel] = useState<OptionsSidebarPanel>(getSelectedPanel);
+	const studioPanels = useSyncExternalStore(
+		studioPanelStore.subscribe,
+		studioPanelStore.getSnapshot,
+		studioPanelStore.getSnapshot,
+	);
+	// A remembered panel tab may not be registered yet (the composition is
+	// still loading) or anymore (another composition is open).
+	const selectedStudioPanel =
+		studioPanels.find((p) => panel === `panel:${p.id}`) ?? null;
+	const visiblePanel: OptionsSidebarPanel =
+		panel.startsWith('panel:') && !selectedStudioPanel ? 'inspector' : panel;
 	const onInspectorSelected = useCallback(() => {
 		setPanel('inspector');
 		persistSelectedOptionsSidebarPanel('inspector');
@@ -74,6 +94,11 @@ export const OptionsPanel: React.FC<{
 	const onRendersSelected = useCallback(() => {
 		setPanel('renders');
 		persistSelectedOptionsSidebarPanel('renders');
+	}, []);
+
+	const onStudioPanelSelected = useCallback((id: string) => {
+		setPanel(`panel:${id}`);
+		persistSelectedOptionsSidebarPanel(`panel:${id}`);
 	}, []);
 
 	useImperativeHandle(optionsSidebarTabs, () => {
@@ -237,7 +262,7 @@ export const OptionsPanel: React.FC<{
 			<div style={tabsContainer}>
 				<Tabs>
 					<Tab
-						selected={panel === 'inspector'}
+						selected={visiblePanel === 'inspector'}
 						onClick={onInspectorSelected}
 						style={{justifyContent: 'space-between'}}
 					>
@@ -248,11 +273,22 @@ export const OptionsPanel: React.FC<{
 					</Tab>
 					<RendersTab
 						onClick={onRendersSelected}
-						selected={panel === 'renders'}
+						selected={visiblePanel === 'renders'}
 					/>
+					{studioPanels.map((p) => (
+						<Tab
+							key={p.id}
+							selected={visiblePanel === `panel:${p.id}`}
+							onClick={() => onStudioPanelSelected(p.id)}
+						>
+							{p.title}
+						</Tab>
+					))}
 				</Tabs>
 			</div>
-			{panel === 'inspector' ? (
+			{selectedStudioPanel ? (
+				<StudioPanelHost element={selectedStudioPanel.element} />
+			) : visiblePanel === 'inspector' ? (
 				<InspectorPanel
 					composition={composition}
 					currentDefaultProps={currentDefaultProps}
